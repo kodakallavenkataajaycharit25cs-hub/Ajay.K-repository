@@ -1,0 +1,13 @@
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+Thumbs.db
+
+# OS generated
+.DS_Store?
+ehthumbs.db
+Icon?
