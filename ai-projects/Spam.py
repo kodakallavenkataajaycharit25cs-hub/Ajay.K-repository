@@ -12,6 +12,7 @@ import string
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
+from torch.cuda.amp import autocast, GradScaler
 
 try:
   stopwords.words('english')
@@ -25,24 +26,7 @@ try:
 except LookupError:
   nltk.download("wordnet")
 
-class SpamDataset(Dataset):
-  def __init__(self,messages,labels, word2vec_model,vector_size):
-    self.messages = messages
-    self.labels = labels
-    self.word2vec_model = word2vec_model
-    self.vector_size = vector_size
 
-  def __len__(self):
-    return len(self.messages)
-
-  def __getitem__(self, index):
-    message = self.messages.iloc[index]
-    label = self.labels.iloc[index]
-    tokens = tokenize_text(message)
-    embeddings = get_avg_word2vec(tokens, self.word2vec_model,self.vector_size)
-    embedded_tensor = torch.from_numpy(embeddings).float()
-    label_tensor = torch.tensor(label, dtype= torch.long)
-    return embedded_tensor, label_tensor 
 
 def preprocess_text(text):
   text = text.lower()
@@ -70,6 +54,95 @@ def get_avg_word2vec(tokens,model,vector_size):
     return np.zeros(vector_size)
 
 
+class SpamDataset(Dataset):
+  def __init__(self,messages,labels, word2vec_model,vector_size):
+    self.messages = messages
+    self.labels = labels
+    self.word2vec_model = word2vec_model
+    self.vector_size = vector_size
+
+  def __len__(self):
+    return len(self.messages)
+
+  def __getitem__(self, index):
+    message = self.messages.iloc[index]
+    label = self.labels.iloc[index]
+    tokens = tokenize_text(message)
+    embeddings = get_avg_word2vec(tokens, self.word2vec_model,self.vector_size)
+    embedded_tensor = torch.from_numpy(embeddings).float()
+    label_tensor = torch.tensor(label, dtype= torch.long)
+    return embedded_tensor, label_tensor 
+
+class SpamTrainer:
+  def __init__(self, model, train_loader, test_loader, criterion, optimizer, epochs=100): 
+    self.model = model
+    self.train_loader = train_loader
+    self.test_loader = test_loader
+    self.criterion = criterion
+    self.optimizer = optimizer
+    self.epochs = epochs
+    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    self.model.to(self.device)
+    print(f"Using device: {self.device}")
+    
+  # Initialize GradScaler for mixed precision training if CUDA is available
+    self.scaler = GradScaler("cuda") if self.device.type == 'cuda' else None    
+  def train(self):
+    print("\n--- Starting Training ---") 
+    for epoch in range(self.epochs):
+      self.model.train()
+      total_loss = 0
+      
+      for batch_index, (data, target) in enumerate(self.train_loader):
+        data, target = data.to(self.device), target.to(self.device)
+        self.optimizer.zero_grad()
+        
+        
+        if self.scaler: 
+          with autocast("cuda"):
+            outputs = self.model(data)
+            loss = self.criterion(outputs, target)
+            self.scaler.scale(loss).backward() # Scale loss and call backward()
+            self.scaler.step(self.optimizer)   
+            self.scaler.update()               
+        else:
+          outputs = self.model(data)
+          loss = self.criterion(outputs, target)
+          loss.backward()
+          self.optimizer.step()
+          total_loss += loss.item()        
+      if (epoch + 1) % 20 == 0:
+        print(f"Epoch [{epoch+1}/{self.epochs}], Loss: {total_loss / len(self.train_loader):.4f}")
+    print("\nTraining finished!") 
+
+
+  def evaluate(self):
+    print("\n--- Evaluating on Test Data ---") 
+    self.model.eval()
+    all_predictions = []
+    all_true_labels = [] 
+    
+    with torch.no_grad():
+      for data, target in self.test_loader:
+        data, target = data.to(self.device), target.to(self.device) 
+        
+        outputs = self.model(data)
+        _, predicted = torch.max(outputs.data, 1)
+        all_predictions.extend(predicted.cpu().numpy())
+        all_true_labels.extend(target.cpu().numpy())
+
+    accuracy = accuracy_score(all_true_labels, all_predictions)
+    precision = precision_score(all_true_labels, all_predictions)
+    recall = recall_score(all_true_labels, all_predictions)
+    f1 = f1_score(all_true_labels, all_predictions)
+    cm = confusion_matrix(all_true_labels, all_predictions)
+
+    print(f'Accuracy: {accuracy:.4f}')
+    print(f'Precision: {precision:.4f}')
+    print(f'Recall: {recall:.4f}')
+    print(f'F1 Score: {f1:.4f}')
+
+
 script_dir = pathlib.Path(__file__).parent.resolve()
 csv_path = script_dir / 'SMSSpamCollection.csv'
 df = pd.read_csv(csv_path,sep= "\t",header = None,names=["label","message"],encoding='latin-1')
@@ -80,19 +153,20 @@ X = df["message"]
 y = df["label"]
 X_train_raw , X_test_raw , y_train , y_test = train_test_split(X,y,test_size= 0.2,random_state=42)
 
-X_train_tokens = X_train_raw.apply(tokenize_text)
-X_test_tokens = X_test_raw.apply(tokenize_text)
+
+X_train_tokens_for_w2v = X_train_raw.apply(tokenize_text).tolist()
 
 w2v_model = Word2Vec.Word2Vec(vector_size=100, window=5, min_count=1, workers=4)
-w2v_model.build_vocab(X_train_tokens)
-w2v_model.train(X_train_tokens, total_examples=w2v_model.corpus_count, epochs=10)
-X_train_word2vec = np.array([get_avg_word2vec(tokens, w2v_model, 100) for tokens in X_train_tokens])
-X_test_word2vec = np.array([get_avg_word2vec(tokens, w2v_model, 100) for tokens in X_test_tokens])
+w2v_model.build_vocab(X_train_tokens_for_w2v) 
+w2v_model.train(X_train_tokens_for_w2v, total_examples=w2v_model.corpus_count, epochs=10)
 
-X_train = torch.from_numpy(X_train_word2vec).float()
-X_test = torch.from_numpy(X_test_word2vec).float()
-y_train = torch.from_numpy(y_train.values).long()
-y_test = torch.from_numpy(y_test.values).long()
+
+train_dataset = SpamDataset(X_train_raw, y_train, w2v_model, vector_size=100)
+test_dataset = SpamDataset(X_test_raw, y_test, w2v_model, vector_size=100)
+
+
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False) 
 
 dropout = 0.2
 model = nn.Sequential(nn.Linear(100,64),
@@ -109,40 +183,22 @@ model = nn.Sequential(nn.Linear(100,64),
       
       nn.Linear(16,2)
     )
-#print(model)
+
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
-#print("Loss Funtion : ",criterion)
-#print("Optimizer : ",optimizer)
 
-epochs = 10000
-for epoch in range(epochs):
-  model.train()
-  outputs = model(X_train)
-  loss = criterion(outputs, y_train)
-  optimizer.zero_grad()
-  loss.backward()
-  optimizer.step()
-  
-  if (epoch+1) % 2000 == 0:
-    print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}")
-print("\nTraining finished!")
+trainer = SpamTrainer(
+    model=model,
+    train_loader=train_loader,
+    test_loader=test_loader,
+    criterion=criterion,
+    optimizer=optimizer,
+    epochs=100 
+)
 
-print("\n--- Evaluating on Test Data ---")
-model.eval()
-with torch.no_grad():
-  outputs = model(X_test)
-  _, predicted = torch.max(outputs.data, 1)
-  y_test_np = y_test.numpy()
-  predicted_np = predicted.numpy()
-  accuracy = accuracy_score(y_test_np, predicted_np)
-  precision = precision_score(y_test_np, predicted_np)
-  recall = recall_score(y_test_np, predicted_np)
-  f1 = f1_score(y_test_np, predicted_np)
-  cm = confusion_matrix(y_test_np, predicted_np)
-  
-  print(f'Accuracy: {accuracy:.4f}')
-  print(f'Precision: {precision:.4f}')
-  print(f'Recall: {recall:.4f}')
-  print(f'F1 Score: {f1:.4f}')
+
+trainer.train()
+trainer.evaluate()
+
+
