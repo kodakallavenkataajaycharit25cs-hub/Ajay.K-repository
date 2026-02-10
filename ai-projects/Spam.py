@@ -11,16 +11,39 @@ from nltk.stem import WordNetLemmatizer
 import string
 import torch.nn as nn
 import torch.optim as optim
-
+from torch.utils.data import DataLoader, Dataset
 
 try:
   stopwords.words('english')
+
 except LookupError:
   nltk.download('stopwords')
+
 try:
   nltk.data.find('corpora/wordnet.zip')
+
 except LookupError:
   nltk.download("wordnet")
+
+class SpamDataset(Dataset):
+  def __init__(self,messages,labels, word2vec_model,vector_size):
+    self.messages = messages
+    self.labels = labels
+    self.word2vec_model = word2vec_model
+    self.vector_size = vector_size
+
+  def __len__(self):
+    return len(self.messages)
+
+  def __getitem__(self, index):
+    message = self.messages.iloc[index]
+    label = self.labels.iloc[index]
+    tokens = tokenize_text(message)
+    embeddings = get_avg_word2vec(tokens, self.word2vec_model,self.vector_size)
+    embedded_tensor = torch.from_numpy(embeddings).float()
+    label_tensor = torch.tensor(label, dtype= torch.long)
+    return embedded_tensor, label_tensor 
+
 def preprocess_text(text):
   text = text.lower()
   text = "".join([char for char in text if char not in string.punctuation])
