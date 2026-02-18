@@ -14,6 +14,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from torch.cuda.amp import autocast, GradScaler  
 import os
+import argparse
 
 """ ----- Imports Done ----- """
 try:
@@ -54,6 +55,16 @@ def get_avg_word2vec(tokens,model,vector_size):
     return np.mean(word_vect , axis=0)
   else:
     return np.zeros(vector_size)
+  
+  
+script_dir = pathlib.Path(__file__).parent.resolve()
+csv_path = script_dir / 'SMSSpamCollection.csv'
+df = pd.read_csv(csv_path,sep= "\t",header = None,names=["label","message"],encoding='latin-1')
+df['label'] = df["label"].map({"ham" : 0 , "spam": 1})
+df['message'] = df["message"].apply(preprocess_text)
+
+X = df["message"] 
+y = df["label"]
 
 
 class SpamDataset(Dataset):
@@ -166,18 +177,7 @@ class SpamTrainer:
     print(f"Checkpoint loaded. Resuming from epoch {epoch}, Loss: {loss:.4f}")
     return epoch, loss
   
-    
   
-    
-
-script_dir = pathlib.Path(__file__).parent.resolve()
-csv_path = script_dir / 'SMSSpamCollection.csv'
-df = pd.read_csv(csv_path,sep= "\t",header = None,names=["label","message"],encoding='latin-1')
-df['label'] = df["label"].map({"ham" : 0 , "spam": 1})
-df['message'] = df["message"].apply(preprocess_text)
-
-X = df["message"] 
-y = df["label"]
 X_train_raw , X_test_raw , y_train , y_test = train_test_split(X,y,test_size= 0.2,random_state=42)
 
 
@@ -186,7 +186,8 @@ X_train_tokens_for_w2v = X_train_raw.apply(tokenize_text).tolist()
 w2v_model = Word2Vec.Word2Vec(vector_size=100, window=5, min_count=1, workers=4)
 w2v_model.build_vocab(X_train_tokens_for_w2v) 
 w2v_model.train(X_train_tokens_for_w2v, total_examples=w2v_model.corpus_count, epochs=10)
-
+w2v_model.save("word2vec.model")
+print("Word2Vec Model Saved!")
 
 train_dataset = SpamDataset(X_train_raw, y_train, w2v_model, vector_size=100)
 test_dataset = SpamDataset(X_test_raw, y_test, w2v_model, vector_size=100)
@@ -224,8 +225,12 @@ trainer = SpamTrainer(
     epochs=100 
 )
 
-checkpoint_path = "Checkpoint.pth.tar" 
+parser = argparse.ArgumentParser()
+parser.add_argument("--checkpoint", type=str, default="Checkpoint.pth.tar", help="Path to checkpoint")
+args = parser.parse_args()
+checkpoint_path = args.checkpoint
 start_epoch = 0
+
 if os.path.exists(checkpoint_path):
   start_epoch, _ = trainer.load_checkpoint(checkpoint_path)
 
