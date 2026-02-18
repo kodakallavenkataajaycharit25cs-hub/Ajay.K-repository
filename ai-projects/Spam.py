@@ -112,7 +112,9 @@ class SpamTrainer:
           self.optimizer.step()
           total_loss += loss.item()        
       if (epoch + 1) % 20 == 0:
-        print(f"Epoch [{epoch+1}/{self.epochs}], Loss: {total_loss / len(self.train_loader):.4f}")
+        current_loss = total_loss / len(self.train_loader)
+        print(f"Epoch [{epoch+1}/{self.epochs}], Loss: {current_loss:.4f}")
+        self.save_checkpoint(epoch + 1, current_loss, filename=f"spam_checkpoint_epoch_{epoch+1}.pth.tar")
     print("\nTraining finished!") 
 
 
@@ -141,7 +143,30 @@ class SpamTrainer:
     print(f'Precision: {precision:.4f}')
     print(f'Recall: {recall:.4f}')
     print(f'F1 Score: {f1:.4f}')
-
+  
+  def save_checkpoint(self, epoch, loss, filename = "Checkpoint.pth.tar"):
+    state = {"epoch" : epoch,
+    "loss" : loss,
+    "model_state_dict" : self.model.state_dict(),
+    "optimizer_state_dict" : self.optimizer.state_dict()     
+    }
+    
+    torch.save(state, filename)
+    print(f"Checkpoint Saved in {filename} at Epoch : {epoch}")
+  
+  def load_checkpoint(self, filename = "Checkpoint.pth.tar" ):
+    print(f"Loading Checkpoint from {filename}")
+    checkpoint = torch.load(filename, map_location = self.device)
+    self.model.load_state_dict(checkpoint['model_state_dict'])
+    self.model.load_state_dict(checkpoint["optimizer_state_dict"])
+    epoch = checkpoint["epoch"]
+    loss = checkpoint["loss"]
+    print(f"Checkpoint loaded. Resuming from epoch {epoch}, Loss: {loss:.4f}")
+    return epoch, loss
+  
+    
+  
+    
 
 script_dir = pathlib.Path(__file__).parent.resolve()
 csv_path = script_dir / 'SMSSpamCollection.csv'
