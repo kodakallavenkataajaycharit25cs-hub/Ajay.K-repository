@@ -10,10 +10,12 @@ from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 import string
 import torch.nn as nn
-import torch.optim as optim
+import torch.optim as optim 
 from torch.utils.data import DataLoader, Dataset
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast, GradScaler  
+import os
 
+""" ----- Imports Done ----- """
 try:
   stopwords.words('english')
 
@@ -87,9 +89,9 @@ class SpamTrainer:
     
   # Initialize GradScaler for mixed precision training if CUDA is available
     self.scaler = GradScaler("cuda") if self.device.type == 'cuda' else None    
-  def train(self):
-    print("\n--- Starting Training ---") 
-    for epoch in range(self.epochs):
+  def train(self, start_epoch = 0):
+    print(f"\n--- Starting Training from Epoch {start_epoch+1} ---")
+    for epoch in range(start_epoch, self.epochs):
       self.model.train()
       total_loss = 0
       
@@ -110,7 +112,7 @@ class SpamTrainer:
           loss = self.criterion(outputs, target)
           loss.backward()
           self.optimizer.step()
-          total_loss += loss.item()        
+        total_loss += loss.item()        
       if (epoch + 1) % 20 == 0:
         current_loss = total_loss / len(self.train_loader)
         print(f"Epoch [{epoch+1}/{self.epochs}], Loss: {current_loss:.4f}")
@@ -158,7 +160,7 @@ class SpamTrainer:
     print(f"Loading Checkpoint from {filename}")
     checkpoint = torch.load(filename, map_location = self.device)
     self.model.load_state_dict(checkpoint['model_state_dict'])
-    self.model.load_state_dict(checkpoint["optimizer_state_dict"])
+    self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     epoch = checkpoint["epoch"]
     loss = checkpoint["loss"]
     print(f"Checkpoint loaded. Resuming from epoch {epoch}, Loss: {loss:.4f}")
@@ -222,8 +224,10 @@ trainer = SpamTrainer(
     epochs=100 
 )
 
+checkpoint_path = "Checkpoint.pth.tar" 
+start_epoch = 0
+if os.path.exists(checkpoint_path):
+  start_epoch, _ = trainer.load_checkpoint(checkpoint_path)
 
-trainer.train()
+trainer.train(start_epoch = start_epoch)
 trainer.evaluate()
-
-
