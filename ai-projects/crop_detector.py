@@ -48,7 +48,7 @@ class CropNet(nn.Module):
       self.bn3 = nn.BatchNorm2d(128)     
       self.fc = nn.Linear(128 * 28 * 28, len(classes))
       
-    def forward(self, x):  # x=[16,3,224,224]
+    def forward(self, x):  
         x = self.pool(F.relu(self.bn1(self.conv1(x))))   
         x = self.pool(F.relu(self.bn2(self.conv2(x))))   
         x = self.pool(F.relu(self.bn3(self.conv3(x))))  
